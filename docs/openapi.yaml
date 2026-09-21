@@ -1,0 +1,517 @@
+openapi: 3.0.3
+info:
+  title: SWARM Feedback API
+  version: 1.0.0
+  description: |
+    Versioned API for uploading SWARM Automation executions and retrieving human review feedback.
+    Authenticate staff with a JWT bearer token and installations with an `sf_` API key bearer token.
+    Do not send GitHub or AI-provider credentials.
+servers:
+  - url: /api/v1
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      description: Staff JWT or installation API key.
+  schemas:
+    Error:
+      type: object
+      required: [error]
+      properties:
+        error:
+          type: object
+          required: [code, message]
+          properties:
+            code: { type: string }
+            message: { type: string }
+            details: {}
+    Scores:
+      type: object
+      required:
+        - promptClarity
+        - promptCompleteness
+        - contextQuality
+        - technicalSpecificity
+        - constraintQuality
+        - intentUnderstanding
+        - implementationQuality
+        - efficiency
+        - overallPromptQuality
+      properties:
+        promptClarity: { type: integer, minimum: 1, maximum: 5 }
+        promptCompleteness: { type: integer, minimum: 1, maximum: 5 }
+        contextQuality: { type: integer, minimum: 1, maximum: 5 }
+        technicalSpecificity: { type: integer, minimum: 1, maximum: 5 }
+        constraintQuality: { type: integer, minimum: 1, maximum: 5 }
+        intentUnderstanding: { type: integer, minimum: 1, maximum: 5 }
+        implementationQuality: { type: integer, minimum: 1, maximum: 5 }
+        efficiency: { type: integer, minimum: 1, maximum: 5 }
+        overallPromptQuality: { type: integer, minimum: 1, maximum: 5 }
+    ExecutionUpload:
+      type: object
+      additionalProperties: false
+      required: [executionId, githubIssue, prompt, ai, repository, codeChange, outcome]
+      properties:
+        executionId: { type: string, format: uuid }
+        schemaVersion: { type: string, enum: ['1'] }
+        githubIssue:
+          type: object
+          additionalProperties: false
+          required: [title]
+          properties:
+            url: { type: string, format: uri }
+            number: { type: integer }
+            title: { type: string }
+            body: { type: string }
+            labels: { type: array, items: { type: string } }
+        prompt:
+          type: object
+          additionalProperties: false
+          required: [effectivePrompt]
+          properties:
+            promptId: { type: string }
+            effectivePrompt: { type: string }
+            systemPrompt: { type: string }
+        ai:
+          type: object
+          additionalProperties: false
+          required: [provider, model]
+          properties:
+            provider: { type: string }
+            model: { type: string }
+            requestSummary: { type: string }
+            changeSummary: { type: string }
+        repository:
+          type: object
+          additionalProperties: false
+          required: [name]
+          properties:
+            host: { type: string }
+            owner: { type: string }
+            name: { type: string }
+            url: { type: string }
+            defaultBranch: { type: string }
+        codeChange:
+          type: object
+          properties:
+            filesChanged:
+              type: array
+              items:
+                type: object
+                required: [path, changeType]
+                properties:
+                  path: { type: string }
+                  changeType: { type: string, enum: [added, modified, deleted, renamed] }
+                  additions: { type: integer }
+                  deletions: { type: integer }
+                  previousPath: { type: string }
+            pullRequest:
+              type: object
+              properties:
+                number: { type: integer }
+                url: { type: string }
+                title: { type: string }
+                state: { type: string }
+            commits:
+              type: array
+              items:
+                type: object
+                required: [sha, message]
+                properties:
+                  sha: { type: string }
+                  message: { type: string }
+                  url: { type: string }
+        operationalNotes: { type: string }
+        errors:
+          type: array
+          items:
+            type: object
+            required: [message]
+            properties:
+              code: { type: string }
+              message: { type: string }
+              severity: { type: string, enum: [error, warning] }
+        warnings:
+          type: array
+          items:
+            type: object
+            required: [message]
+            properties:
+              code: { type: string }
+              message: { type: string }
+        outcome:
+          type: object
+          required: [status]
+          properties:
+            status: { type: string, enum: [success, partial, failed, cancelled] }
+            summary: { type: string }
+        startedAt: { type: string, format: date-time }
+        completedAt: { type: string, format: date-time }
+        metadata:
+          type: object
+          additionalProperties: { type: string }
+    Feedback:
+      type: object
+      required: [executionId, reviewId, scores, overallScore, comments, deficiencies, recommendations, recommendedImprovedPrompt, reviewerTimestamp, reviewVersion, feedbackDeliveryStatus, evaluatorType]
+      properties:
+        executionId: { type: string, format: uuid }
+        reviewId: { type: string, format: uuid }
+        scores: { $ref: '#/components/schemas/Scores' }
+        overallScore: { type: integer, description: Overall prompt quality score. }
+        scoreAverage: { type: number }
+        comments: { type: string }
+        deficiencies:
+          type: object
+          properties:
+            missingInformation: { type: string }
+            ambiguous: { type: string }
+            couldHaveBeenWrittenBetter: { type: string }
+        recommendations: { type: string }
+        whatWasDoneWell: { type: string }
+        recommendedImprovedPrompt: { type: string }
+        reviewerTimestamp: { type: string, format: date-time }
+        reviewVersion: { type: integer }
+        feedbackDeliveryStatus: { type: string, enum: [not_ready, available, acknowledged] }
+        evaluatorType: { type: string, enum: [human, automated] }
+        evaluatorModel: { type: string, nullable: true }
+paths:
+  /health:
+    get:
+      summary: Liveness
+      responses:
+        '200': { description: Service is up }
+  /ready:
+    get:
+      summary: Readiness, including DynamoDB
+      responses:
+        '200': { description: Dependencies are ready }
+        '503': { description: DynamoDB is unavailable }
+  /auth/login:
+    post:
+      summary: Staff login
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [email, password]
+              properties:
+                email: { type: string }
+                password: { type: string }
+      responses:
+        '200': { description: JWT and user profile }
+        '401': { description: Invalid credentials, content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
+  /auth/me:
+    get:
+      security: [{ bearerAuth: [] }]
+      summary: Current staff user
+      responses:
+        '200': { description: User profile }
+  /installations/register:
+    post:
+      summary: Register an installation with the bootstrap token
+      parameters:
+        - in: header
+          name: X-Bootstrap-Token
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name]
+              properties:
+                name: { type: string }
+                contactEmail: { type: string }
+      responses:
+        '200': { description: Installation and one-time API key }
+  /installations:
+    post:
+      security: [{ bearerAuth: [] }]
+      summary: Create an installation as an administrator
+      responses:
+        '200': { description: Installation and one-time API key }
+    get:
+      security: [{ bearerAuth: [] }]
+      summary: List installations visible to staff
+      responses:
+        '200': { description: Installation list }
+  /installations/{installationId}/rotate-key:
+    post:
+      security: [{ bearerAuth: [] }]
+      summary: Rotate an installation API key
+      parameters:
+        - in: path
+          name: installationId
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        '200': { description: New one-time API key }
+  /installations/{installationId}/disable:
+    post:
+      security: [{ bearerAuth: [] }]
+      summary: Disable an installation
+      parameters:
+        - in: path
+          name: installationId
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        '200': { description: Installation disabled }
+  /users:
+    post:
+      security: [{ bearerAuth: [] }]
+      summary: Create a staff user
+      responses:
+        '200': { description: User created }
+    get:
+      security: [{ bearerAuth: [] }]
+      summary: List staff users
+      responses:
+        '200': { description: Users }
+  /executions:
+    post:
+      security: [{ bearerAuth: [] }]
+      summary: Upload one execution idempotently
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ExecutionUpload' }
+      responses:
+        '201': { description: Stored }
+        '200': { description: Duplicate of the stored payload }
+        '409': { description: Execution id already used with different content }
+    get:
+      security: [{ bearerAuth: [] }]
+      summary: List executions for an installation
+      parameters:
+        - in: query
+          name: installationId
+          schema: { type: string, format: uuid }
+        - in: query
+          name: status
+          schema: { type: string, enum: [pending, in_review, completed, needs_more_information, all] }
+        - in: query
+          name: limit
+          schema: { type: integer }
+        - in: query
+          name: cursor
+          schema: { type: string }
+      responses:
+        '200': { description: Page of execution summaries }
+  /executions/batch:
+    post:
+      security: [{ bearerAuth: [] }]
+      summary: Upload up to 20 executions; each item is idempotent
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [executions]
+              properties:
+                executions:
+                  type: array
+                  maxItems: 20
+                  items: { $ref: '#/components/schemas/ExecutionUpload' }
+      responses:
+        '200': { description: Per-item created, duplicate, or error results }
+  /executions/{executionId}:
+    get:
+      security: [{ bearerAuth: [] }]
+      summary: Execution detail. Reviewers also receive the working review.
+      parameters:
+        - in: path
+          name: executionId
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        '200': { description: Execution }
+        '404': { description: Not found for this caller }
+    patch:
+      security: [{ bearerAuth: [] }]
+      summary: Add outcome, notes, files, or errors after the original upload
+      parameters:
+        - in: path
+          name: executionId
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        '200': { description: Updated execution }
+  /executions/{executionId}/status:
+    get:
+      security: [{ bearerAuth: [] }]
+      summary: Upload and review status
+      parameters:
+        - in: path
+          name: executionId
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        '200': { description: Status }
+  /review-queue:
+    get:
+      security: [{ bearerAuth: [] }]
+      summary: Review queue
+      parameters:
+        - in: query
+          name: status
+          schema: { type: string }
+        - in: query
+          name: installationId
+          schema: { type: string, format: uuid }
+        - in: query
+          name: repository
+          schema: { type: string, description: owner/name }
+        - in: query
+          name: q
+          schema: { type: string }
+        - in: query
+          name: limit
+          schema: { type: integer }
+        - in: query
+          name: cursor
+          schema: { type: string }
+      responses:
+        '200': { description: Queue page }
+  /review-queue/{executionId}/claim:
+    post:
+      security: [{ bearerAuth: [] }]
+      summary: Assign the execution to the current reviewer
+      parameters:
+        - in: path
+          name: executionId
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        '200': { description: Claimed }
+  /review-queue/{executionId}/release:
+    post:
+      security: [{ bearerAuth: [] }]
+      summary: Return an in-review execution to pending
+      parameters:
+        - in: path
+          name: executionId
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        '200': { description: Released }
+  /executions/{executionId}/review:
+    put:
+      security: [{ bearerAuth: [] }]
+      summary: Save a draft review without publishing feedback
+      parameters:
+        - in: path
+          name: executionId
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        '200': { description: Draft }
+  /executions/{executionId}/review/submit:
+    post:
+      security: [{ bearerAuth: [] }]
+      summary: Publish a human review version
+      parameters:
+        - in: path
+          name: executionId
+          required: true
+          schema: { type: string, format: uuid }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [scores]
+              properties:
+                scores: { $ref: '#/components/schemas/Scores' }
+                whatWasDoneWell: { type: string }
+                missingInformation: { type: string }
+                ambiguous: { type: string }
+                couldBeWrittenBetter: { type: string }
+                recommendedImprovedPrompt: { type: string }
+                generalComments: { type: string }
+      responses:
+        '200':
+          description: Published feedback
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Feedback' }
+  /executions/{executionId}/review/needs-information:
+    post:
+      security: [{ bearerAuth: [] }]
+      summary: Park the execution until the installation adds information
+      parameters:
+        - in: path
+          name: executionId
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        '200': { description: Status updated. Feedback is not published. }
+  /feedback:
+    get:
+      security: [{ bearerAuth: [] }]
+      summary: List published feedback for an installation
+      parameters:
+        - in: query
+          name: installationId
+          schema: { type: string, format: uuid }
+        - in: query
+          name: executionId
+          schema: { type: string, format: uuid }
+        - in: query
+          name: deliveryStatus
+          schema: { type: string, enum: [available, acknowledged, not_ready] }
+        - in: query
+          name: evaluatorType
+          schema: { type: string, enum: [human, automated] }
+      responses:
+        '200': { description: Feedback page }
+  /feedback/{reviewId}:
+    get:
+      security: [{ bearerAuth: [] }]
+      summary: Fetch one published review
+      parameters:
+        - in: path
+          name: reviewId
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        '200':
+          description: Feedback
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Feedback' }
+  /feedback/{reviewId}/acknowledgements:
+    post:
+      security: [{ bearerAuth: [] }]
+      summary: Acknowledge a feedback version
+      parameters:
+        - in: path
+          name: reviewId
+          required: true
+          schema: { type: string, format: uuid }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [reviewVersion]
+              properties:
+                reviewVersion: { type: integer }
+      responses:
+        '200': { description: Acknowledged, including a repeated acknowledgement of the same version }
+        '409': { description: The review version is stale }
+  /audit:
+    get:
+      security: [{ bearerAuth: [] }]
+      summary: Recent administrator audit events
+      responses:
+        '200': { description: Audit events from the last week }
